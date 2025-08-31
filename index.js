@@ -2,6 +2,8 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 const admin = require("firebase-admin");
+const nodemailer = require("nodemailer");
+// const transporter = require("./transporter");
 require("dotenv").config();
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
@@ -41,6 +43,13 @@ const verifyFirebaseToken = async (req, res, next) => {
     return res.status(403).json({ message: "Forbidden: Invalid token" });
   }
 };
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 async function run() {
   try {
@@ -165,19 +174,38 @@ async function run() {
       try {
         const paymentInfo = req.body;
         const id = paymentInfo.id;
+        console.log(id);
 
-        // 1️⃣ Save payment to paymentCollection
+        // 1 Save payment to paymentCollection
         const paymentResult = await paymentCollection.insertOne({
           ...paymentInfo,
           paid_at: new Date(),
           paid_at_string: new Date().toISOString(),
         });
 
-        // 2️⃣ Update status of that parcel in parcelCollection
+        // 2 Update status of that parcel in parcelCollection
         const updateResult = await parcelCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: { paymentStatus: "paid" } }
         );
+
+        try {
+          const info = await transporter.sendMail({
+            from: `"ProFast Courier" <${process.env.EMAIL_USER}>`,
+            to: paymentInfo?.email,
+            subject: "Payment Successful 🎉",
+            html: `
+              <h2>Payment Successful!</h2>
+              <p>Thank you for your payment of <strong>${paymentInfo.amount} BDT</strong>.</p>
+              <p>Transaction ID: <strong>${paymentInfo.transactionId}</strong></p>
+              <br/>
+              <p>Regards,<br/>ProFast Courier Team</p>
+            `,
+          });
+          console.log("[Nodemailer] Email sent successfully:", info);
+        } catch (emailError) {
+          console.error("[Nodemailer] Email send failed:", emailError);
+        }
 
         res.status(201).json({
           message: "✅ Payment saved and parcel status updated!",
